@@ -4,6 +4,7 @@ import argparse
 import sys
 import os
 import datetime
+import shutil
 from pathlib import Path
 
 def fail_if_not_ok(response, message):
@@ -47,7 +48,7 @@ if args.password:
 headers =  {"Content-Type":"application/json"}
 api_url = instance + "/api/v4"
 
-if user == None:
+if user == None and token == None:
     user = input("Input user to export data for: ")
 
 if password == None and token == None:
@@ -68,31 +69,200 @@ if token == None:
 else:
     headers["Authorization"] = "Bearer " + token
 
+
+# Get current user
+current_user_url = api_url + "/users/me"
+response = requests.get(current_user_url, headers=headers)
+fail_if_not_ok(response, "Retrieving user failed")
+current_user = response.json()
+user_id = current_user["id"]
+
+print("User " + str(user) + " was found with id " + str(user_id))
+
+# Setup output directory
+export_path = Path(output, "Mattermost-Export-" + datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
+export_path.mkdir(parents=True)
+
+# -------------------------------------------
+#  Export users
+# -------------------------------------------
+
+# Export all users
 users_url = api_url + "/users"
 response = requests.get(users_url, headers=headers)
 fail_if_not_ok(response, "Retrieving all users failed")
 
-users = response.json()
-[current_user] = [u for u in users if u['email'] == user]
-user_id = current_user["id"]
-print("User " + str(user) + " was found with id " + str(user_id))
+all_users = response.json()
 
-teams_url = api_url + "/users/" + str(user_id) + "/teams"
+users_export_path = Path(export_path, "users")
+users_export_path.mkdir(parents=True)
+
+with (users_export_path / "users.json").open("w") as f:
+    json.dump(all_users, f)
+
+with (users_export_path / "me.json").open("w") as f:
+    json.dump(current_user, f)
+
+## Add profile pictures and export user data
+
+users_picture_export_path = Path(users_export_path, "profile-pictures")
+users_picture_export_path.mkdir(parents=True)
+
+for user in all_users:
+    profile_pic_url = api_url + "/users/" + user["id"] + "/image"
+    response = requests.get(profile_pic_url, headers=headers, stream=True)
+    
+    if response.status_code == 404 or response.status_code == 403:
+        resonse = requests.get(profile_pic_url + "/default", headers=headers, stream=True)
+        
+    fail_if_not_ok(response, "Failed to retrieve profile picture for user " + user["email"])
+
+    with (users_picture_export_path / user["id"]).open("wb") as f:
+        for chunk in response.iter_content(1024):
+            f.write(chunk)
+
+# -------------------------------------------
+#  Export teams
+# -------------------------------------------
+
+teams_url = api_url + "/users/me/teams"
 response = requests.get(teams_url, headers=headers)
-fail_if_not_ok(response, "Retrieving teams for user " + str(user) + "failed")
+fail_if_not_ok(response, "Retrieving teams failed")
 
 teams = response.json()
-teams_html = "<html><head><title>Mattermost Export - Select Team</title></head><body><h2>Select team</h2><ul>"
+
+teams_export_path = Path(export_path, "teams")
+teams_export_path.mkdir(parents=True)
+
+with (teams_export_path / "teams.json").open("w") as f:
+    json.dump(teams, f)
+
+# -------------------------------------------
+#  Export channels per team
+# -------------------------------------------
 
 for team in teams:
-    teams_html += '<li><a href="' + team["id"] + '/index.html">' + team["display_name"] + '</a></li>'
+    team_export_path = teams_export_path / team["id"]
+    team_export_path.mkdir(parents=True)
 
-teams_html += "</body></html>"
+    # Download icon
+    teams_icon_url = api_url + "/teams/" + team["id"] + "/image"
+    response = requests.get(teams_icon_url, headers=headers, stream=True)
 
-export_path = Path(output, "Mattermost-Export-" + datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
-export_path.mkdir(parents=True)
+    if response.status_code != 404:
+        fail_if_not_ok(response, "Failed to retrieve team icon for team " + team["name"])
 
-index_file_path = export_path / "index.html"
+        with (team_export_path / "icon").open("wb") as f:
+            for chunk in response.iter_content(1024):
+                f.write(chunk)
 
-with index_file_path.open("w", encoding ="utf-8") as f:
-    f.write(teams_html)
+    # Get channel per team for current user
+    channels_url = api_url + "/users/me/teams/" + team["id"] + "/channels"
+    response = requests.get(channels_url, headers=headers)
+    
+    fail_if_not_ok(response, "Failed to channels for team " + team["name"])
+
+    channels = response.json()
+
+    # Export channel definitions
+    with (team_export_path / "channels.json").open("w") as f:
+        json.dump(channels, f)
+
+    # Export each channel
+    for channel in channels:
+        channel_export_path = team_export_path / channel["id"]
+        channel_export_path.mkdir(parents=True)
+
+        # Export members
+        members_url = api_url + "/channels/" + channel["id"] + "/members"
+        response = requests.get(members_url, headers=headers)
+        
+        fail_if_not_ok(response, "Failed to retrieve members for channel " + channel["name"])
+
+        members = response.json()
+        with (channel_export_path / "members.json").open("w") as f:
+            json.dump(members, f)
+
+        # Export pinned posts
+        pinned_posts_url = api_url + "/channels/" + channel["id"] + "/pinned"
+        response = requests.get(pinned_posts_url, headers=headers)
+        
+        fail_if_not_ok(response, "Failed to retrieve pinned posts for channel " + channel["name"])
+
+        pinned_posts = response.json()
+        with (channel_export_path / "pinned-posts.json").open("w") as f:
+            json.dump(pinned_posts, f)
+
+        # Export all posts
+        page = 0
+
+        attachment_path = channel_export_path / "attachments"
+        attachment_path.mkdir(parents=True)
+
+        thumbnails_path = channel_export_path / "thumbnails"
+        thumbnails_path.mkdir(parents=True)
+
+        while True:
+            posts_url = api_url + "/channels/" + channel["id"] + "/posts"
+            params = {"per_page":200, "page": page}
+
+            response = requests.get(posts_url, headers=headers, params=params)
+            fail_if_not_ok(response, "Failed to retrieve posts for page " + str(page) + " for channel " + channel["name"])
+
+            posts = response.json()
+
+            if len(posts) <= 0:
+                break
+            
+            with (channel_export_path / ("posts-page-" + str(page) + ".json")).open("w") as f:
+                json.dump(posts, f)
+
+            page += 1
+
+            # Export all attachments
+            file_ids = [p["file_ids"] for p in posts["posts"].values() if "file_ids" in p]
+            file_ids = [id for file_id_list in file_ids for id in file_id_list]
+
+            for file_id in file_ids:
+                # File
+                file_url = api_url + "/files/" + file_id
+                response = requests.get(file_url, headers=headers, stream=True)
+
+                fail_if_not_ok(response, "Failed to retrieve file " + file_id)
+                
+                with (attachment_path / file_id).open("wb") as f:
+                    for chunk in response.iter_content(1024):
+                        f.write(chunk)
+
+                # Thumbnail
+                file_url = api_url + "/files/" + file_id + "/thumbnail"
+                response = requests.get(file_url, headers=headers, stream=True)
+                
+                if response.status_code == 400:
+                    continue # File has no thumbnail
+
+                fail_if_not_ok(response, "Failed to retrieve thumbnail for file " + file_id)
+                
+                with (thumbnails_path / file_id).open("wb") as f:
+                    for chunk in response.iter_content(1024):
+                        f.write(chunk)
+
+# teams_url = api_url + "/users/" + str(user_id) + "/teams"
+# response = requests.get(teams_url, headers=headers)
+# fail_if_not_ok(response, "Retrieving teams for user " + str(user) + "failed")
+
+# teams = response.json()
+# teams_html = "<html><head><title>Mattermost Export - Select Team</title></head><body><h2>Select team</h2><ul>"
+
+# for team in teams:
+#     teams_html += '<li><a href="' + team["id"] + '/index.html">' + team["display_name"] + '</a></li>'
+
+# teams_html += "</body></html>"
+
+# export_path = Path(output, "Mattermost-Export-" + datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
+# export_path.mkdir(parents=True)
+
+# index_file_path = export_path / "index.html"
+
+# with index_file_path.open("w", encoding ="utf-8") as f:
+#     f.write(teams_html)
