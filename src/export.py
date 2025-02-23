@@ -81,7 +81,7 @@ fail_if_not_ok(response, "Retrieving user failed")
 current_user = response.json()
 user_id = current_user["id"]
 
-print("User " + str(user) + " was found with id " + str(user_id))
+print("User " + str(current_user["email"]) + " was found with id " + str(user_id))
 
 # Setup output directory
 export_path = Path(output, "Mattermost-Export-" + datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
