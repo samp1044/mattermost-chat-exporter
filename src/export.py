@@ -25,10 +25,12 @@ parser.add_argument("-t", "--token", help="use this token for authentication and
 parser.add_argument("-u", "--user", help="use this user id for authentication and user specific commands")
 parser.add_argument("-p", "--password", help="user this password for authentication")
 parser.add_argument("--hide-token", help="do not print the session token when logging-in as user/password", action='store_true')
+parser.add_argument("--allow-unsafe-ssl", help="allow unknown https certificates. WARNING: use at your own risk!", action='store_true')
 
 args = parser.parse_args()
 
 instance = args.url
+verify_ssl = (args.allow_unsafe_ssl != True)
 output = os.getcwd()
 token = None
 user = None
@@ -59,7 +61,7 @@ if token == None:
     login_url = api_url + "/users/login"
     login_dto = {"login_id":user,"password":password}
 
-    response = requests.post(login_url, data=json.dumps(login_dto), headers=headers)
+    response = requests.post(login_url, data=json.dumps(login_dto), headers=headers, verify=verify_ssl)
     fail_if_not_ok(response, "Authentication to " + str(instance) + "failed")
 
     token = response.headers["Token"]
@@ -74,7 +76,7 @@ else:
 
 # Get current user
 current_user_url = api_url + "/users/me"
-response = requests.get(current_user_url, headers=headers)
+response = requests.get(current_user_url, headers=headers, verify=verify_ssl)
 fail_if_not_ok(response, "Retrieving user failed")
 current_user = response.json()
 user_id = current_user["id"]
@@ -91,7 +93,7 @@ export_path.mkdir(parents=True)
 
 # Export all users
 users_url = api_url + "/users"
-response = requests.get(users_url, headers=headers)
+response = requests.get(users_url, headers=headers, verify=verify_ssl)
 fail_if_not_ok(response, "Retrieving all users failed")
 
 all_users = response.json()
@@ -112,10 +114,10 @@ users_picture_export_path.mkdir(parents=True)
 
 for user in all_users:
     profile_pic_url = api_url + "/users/" + user["id"] + "/image"
-    response = requests.get(profile_pic_url, headers=headers, stream=True)
+    response = requests.get(profile_pic_url, headers=headers, stream=True, verify=verify_ssl)
     
     if response.status_code == 404 or response.status_code == 403:
-        resonse = requests.get(profile_pic_url + "/default", headers=headers, stream=True)
+        resonse = requests.get(profile_pic_url + "/default", headers=headers, stream=True, verify=verify_ssl)
         
     fail_if_not_ok(response, "Failed to retrieve profile picture for user " + user["email"])
 
@@ -139,7 +141,7 @@ emoji_url = api_url + "/emoji"
 while True:
     params = {"per_page":200, "page": emoji_page}
 
-    response = requests.get(emoji_url, headers=headers, params=params)
+    response = requests.get(emoji_url, headers=headers, params=params, verify=verify_ssl)
     fail_if_not_ok(response, "Retrieving custom emoji list page " + str(emoji_page) + "failed")
 
     emojis = response.json()
@@ -155,7 +157,7 @@ while True:
     # Retrieve custom emoji images
     for emoji in emojis:
         emoji_image_url = emoji_url + "/" + emoji["id"] + "/image"
-        response = requests.get(emoji_image_url, headers=headers, stream=True)
+        response = requests.get(emoji_image_url, headers=headers, stream=True, verify=verify_ssl)
             
         fail_if_not_ok(response, "Failed to retrieve image for emoji " + str(emoji["id"]))
 
@@ -169,7 +171,7 @@ while True:
 # -------------------------------------------
 
 teams_url = api_url + "/users/me/teams"
-response = requests.get(teams_url, headers=headers)
+response = requests.get(teams_url, headers=headers, verify=verify_ssl)
 fail_if_not_ok(response, "Retrieving teams failed")
 
 teams = response.json()
@@ -190,7 +192,7 @@ for team in teams:
 
     # Download icon
     teams_icon_url = api_url + "/teams/" + team["id"] + "/image"
-    response = requests.get(teams_icon_url, headers=headers, stream=True)
+    response = requests.get(teams_icon_url, headers=headers, stream=True, verify=verify_ssl)
 
     if response.status_code != 404:
         fail_if_not_ok(response, "Failed to retrieve team icon for team " + team["name"])
@@ -201,7 +203,7 @@ for team in teams:
 
     # Get channel per team for current user
     channels_url = api_url + "/users/me/teams/" + team["id"] + "/channels"
-    response = requests.get(channels_url, headers=headers)
+    response = requests.get(channels_url, headers=headers, verify=verify_ssl)
     
     fail_if_not_ok(response, "Failed to retrieve channels for team " + team["name"])
 
@@ -218,7 +220,7 @@ for team in teams:
 
         # Export members
         members_url = api_url + "/channels/" + channel["id"] + "/members"
-        response = requests.get(members_url, headers=headers)
+        response = requests.get(members_url, headers=headers, verify=verify_ssl)
         
         fail_if_not_ok(response, "Failed to retrieve members for channel " + channel["name"])
 
@@ -228,7 +230,7 @@ for team in teams:
 
         # Export pinned posts
         pinned_posts_url = api_url + "/channels/" + channel["id"] + "/pinned"
-        response = requests.get(pinned_posts_url, headers=headers)
+        response = requests.get(pinned_posts_url, headers=headers, verify=verify_ssl)
         
         fail_if_not_ok(response, "Failed to retrieve pinned posts for channel " + channel["name"])
 
@@ -249,7 +251,7 @@ for team in teams:
             posts_url = api_url + "/channels/" + channel["id"] + "/posts"
             params = {"per_page":200, "page": page}
 
-            response = requests.get(posts_url, headers=headers, params=params)
+            response = requests.get(posts_url, headers=headers, params=params, verify=verify_ssl)
             fail_if_not_ok(response, "Failed to retrieve posts for page " + str(page) + " for channel " + channel["name"])
 
             posts = response.json()
@@ -270,7 +272,7 @@ for team in teams:
             for file_id in file_ids:
                 # File
                 file_url = api_url + "/files/" + file_id
-                response = requests.get(file_url, headers=headers, stream=True)
+                response = requests.get(file_url, headers=headers, stream=True, verify=verify_ssl)
 
                 fail_if_not_ok(response, "Failed to retrieve file " + file_id)
                 
@@ -280,7 +282,7 @@ for team in teams:
 
                 # Thumbnail
                 file_url = api_url + "/files/" + file_id + "/thumbnail"
-                response = requests.get(file_url, headers=headers, stream=True)
+                response = requests.get(file_url, headers=headers, stream=True, verify=verify_ssl)
                 
                 if response.status_code == 400:
                     continue # File has no thumbnail
