@@ -24,6 +24,7 @@ parser.add_argument("-o", "--output", help="export data into this directory", ty
 parser.add_argument("-t", "--token", help="use this token for authentication and skip log-in call")
 parser.add_argument("-u", "--user", help="use this user id for authentication and user specific commands")
 parser.add_argument("-p", "--password", help="user this password for authentication")
+parser.add_argument("--hide-token", help="do not print the session token when logging-in as user/password", action='store_true')
 
 args = parser.parse_args()
 
@@ -63,8 +64,9 @@ if token == None:
 
     token = response.headers["Token"]
     headers["Authorization"] = "Bearer " + token
-
-    print("Logged in as " + str(user) + " with token " + str(token))
+    
+    if args.hide_token != True:
+        print("Logged in as " + str(user) + " with token " + str(token))
         
 else:
     headers["Authorization"] = "Bearer " + token
